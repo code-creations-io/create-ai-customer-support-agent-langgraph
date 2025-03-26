@@ -1,5 +1,5 @@
 import json
-from typing import Annotated
+from typing import Literal, Annotated
 from typing_extensions import TypedDict
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import ToolMessage
@@ -8,7 +8,6 @@ from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.types import Command
-from typing import Literal
 
 # Constants
 MODEL = "claude-3-5-haiku-20241022"
@@ -294,35 +293,3 @@ CONVERSATION_STATE: State = {
     "is_finished": False,
     "checked_checklist": False,
 }
-
-# # Streaming function to stream the graph updates 
-# def stream_graph_updates(state: State):
-#     """Runs or streams the graph with the current state."""
-#     for event in graph.stream(state):
-#         for value in event.values():
-            
-#             # Update conversation state
-#             for k, v in value.items():
-#                 print(k, v)
-
-#                 # These are new messages from the tool or LLM
-#                 if k == "messages":
-#                     for msg in v:
-#                         # Append them to the main conversation so the full history is in conversation_state["messages"]
-#                         conversation_state["messages"].append(msg)
-#                         # Print them to the console
-#                         # We'll do a naive approach. If msg is a ToolMessage or LLM, show it.
-#                         if hasattr(msg, "content"):
-#                             print(f"🤖 AI: {msg.content}")
-                
-#                 # List
-#                 elif isinstance(v, list):
-#                     conversation_state[k] = v if not conversation_state[k] else conversation_state[k]
-
-#                 # String
-#                 elif isinstance(v, str):
-#                     conversation_state[k] = v if not conversation_state[k] else conversation_state[k]
-                
-#                 # Boolean
-#                 elif isinstance(v, bool):
-#                     conversation_state[k] = v if not conversation_state[k] else conversation_state[k]
