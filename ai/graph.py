@@ -1,4 +1,6 @@
 import json
+from typing import Literal, Annotated
+from typing_extensions import TypedDict
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
@@ -6,8 +8,6 @@ from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.types import Command
-from typing import Literal, Annotated
-from typing_extensions import TypedDict
 
 # Constants
 MODEL = "claude-3-5-haiku-20241022"
@@ -47,6 +47,7 @@ RULES = (
     "\n- Your goal is to collect all the items in the checklist. It may occur that the customer has questions or needs assistance, be prepared to address those too.The customer may provide answers to the checklist items in an unexpected order, this is fine, just make sure you have all the required information."
     "\n- If the customer has all the required information, inform them that they are ready to purchase a HomeBot."
 )
+
 
 # Define the State class
 class State(TypedDict):
@@ -88,12 +89,12 @@ def check_required_checklist_items(state: State, tool_call_id: Annotated[str, In
             "delivery_date": state.get("delivery_date", ""),
             "is_finished": state.get("is_finished", "")
         })
-    
+
     # Otherwise, load inquiry data
     inquiry = {}
     with open("data/customer_inquiry.json", "r") as f:
         inquiry = json.load(f)
-    
+
     # Updaate state using inquiry data
     for key, val in inquiry.items():
         if key in state:
@@ -140,8 +141,8 @@ def explain_product_tool(
     """
     This tool is used to explain a specific product to the customer.
     """
-    
-    # Construct a short explanation. 
+
+    # Construct a short explanation.
     product_explanations = {
         "HomeBot 1000": "The basic model, does hoovering, washing up and basic cooking. £500",
         "HomeBot 2000": "The advanced model, does hoovering, washing up, cooking, gardening and childcare. £1000",
@@ -149,7 +150,7 @@ def explain_product_tool(
     }
 
     explanation = product_explanations.get(
-        product, 
+        product,
         "I'm not sure how to explain that product. Please provide a valid product name."
     )
 
@@ -161,7 +162,7 @@ def explain_product_tool(
                     f"Here’s the explanation for the {product}:\n\n{explanation}"
                 ),
                 tool_call_id=tool_call_id,
-            )    
+            )
         ],
         "customer_name": state.get("customer_name", ""),
         "product": state.get("product", ""),
@@ -182,12 +183,12 @@ def parse_date_tool(
     iso_datetime: str
 ) -> str:
     """
-    Tool that expects the LLM to provide a date/time 
+    Tool that expects the LLM to provide a date/time
     in 'YYYY-MM-DD HH:MM' format (24-hour clock).
-    
+
     For instance, if the user says:
       "Let's do a call on March 29th at 5pm"
-    the LLM itself must interpret that as 
+    the LLM itself must interpret that as
       "2025-03-29 17:00"
     and then call parse_date_tool(date_str="2025-03-29 17:00").
     """
@@ -256,7 +257,7 @@ class AiAgent:
         graph_builder.add_edge("tools", "chatbot")
         graph = graph_builder.compile()
         return graph
-    
+
     # Nodes
     def _node_chatbot(self, state: State):
         """
@@ -265,7 +266,7 @@ class AiAgent:
 
         # If customer name exists add a system message to avoid asking for it again
         if state["customer_name"]:
-            if all("We already know the customer's name is" not in m.content 
+            if all("We already know the customer's name is" not in m.content
                 for m in state["messages"] if m.__class__.__name__ == "SystemMessage"):
                 override_msg = {
                     "role": "system",

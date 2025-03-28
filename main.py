@@ -22,7 +22,7 @@ def main():
                                 if type(msg.content) == list:
                                     continue
                                 print(f"\n🤖 AI: {msg.content}")
-                    
+
                     # Update state based on key-value pairs
                     elif isinstance(v, list):
                         state[k] = v if not state[k] else state[k]
@@ -52,12 +52,12 @@ def main():
 
         # If all required fields have been collected, end conversation
         check = [
-            "customer_name", 
-            "product", 
+            "customer_name",
+            "product",
             "delivery_address",
-            "email_address", 
-            "phone_number", 
-            "payment_method", 
+            "email_address",
+            "phone_number",
+            "payment_method",
             "delivery_date"
         ]
         if all(CONVERSATION_STATE[key] for key in check):
@@ -66,7 +66,7 @@ def main():
             with open("data/log.json", "w") as f:
                 f.write(json.dumps(CONVERSATION_STATE, indent=2, sort_keys=True, default=str))
             break
-            
+
         # If conversation is finished, eend conversation
         if CONVERSATION_STATE["is_finished"]:
             print("\n🤖 AI: Thanks for your time! Bye.")

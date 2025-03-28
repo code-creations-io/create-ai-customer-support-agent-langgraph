@@ -152,18 +152,6 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.types import Command
 
 # Constants
-import json
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import ToolMessage
-from langchain_core.tools import InjectedToolCallId, tool
-from langgraph.graph import StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.types import Command
-from typing import Literal, Annotated
-from typing_extensions import TypedDict
-
-# Constants
 MODEL = "claude-3-5-haiku-20241022"
 ROLE = (
     "You are a customer support agent for a Domestic Robotics company called HomeBots. "
