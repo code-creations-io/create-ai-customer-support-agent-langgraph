@@ -19,6 +19,7 @@ ROLE = (
 CONTEXT = (
     "Here is a mandatory checklist of requirements from the customer in order for them to purchase a HomeBot: "
     "\n- Customer's name"
+    "\n- Product"
     "\n- Address for delivery"
     "\n- Email address"
     "\n- Phone number"
@@ -31,12 +32,14 @@ CONTEXT = (
 )
 TASK = (
     "1. Greet the customer and confirm their name. If the customer's name is already known in the conversation state, do not ask for it again."
-    "\n2. Check the case files once (unless new info arises) to see if the customer has submitted all there are any oustanding items needed from the checklist."
-    "\n3. If any checklist items are missing, one by one, ask the customer to provide each of them and save their answer. If all checklist items are saved, inform the customer that they are ready to purchase a HomeBot."
+    "\n2. Check the customer inquiry data once (unless new info arises) to see if there are any outstanding items needed from the checklist."
+    "\n3. If any checklist items are missing, one by one, ask the customer to provide each of them and save their answer."
+    "\n4. If all checklist items are saved, inform the customer that they are ready to purchase a HomeBot."
     "\n4. End the conversation."
 )
 RULES = (
     "- IMPORTANT: Once you have called the check_required_checklist_items tool once, do not call it again unless the user explicitly asks you to re-check. If state[\"checked_checklist\"] is True, do not call check_required_checklist_items. Instead, continue the conversation without repeating the checklist requirements."
+    "- IMPORTANT: Once the checklist items are known in the state, do not ask for them again. If the customer provides new information, update the state accordingly."
     "\n- Use the customer's name if you have it. If the customer's name is already known in the conversation state, do not ask for it again."
     "\n- Always be polite and professional."
     "\n- Be clear and concise in your communication."
@@ -60,22 +63,22 @@ class State(TypedDict):
 
 # Tools
 @tool
-def check_required_checklist_items(
-    state: State,
-    tool_call_id: Annotated[str, InjectedToolCallId]
-) -> str:
+def check_required_checklist_items(state: State, tool_call_id: Annotated[str, InjectedToolCallId]) -> str:
     """
     This tool checks the customer inquiry to see which checklist items are currently available.
     If we've already run this tool before we do a short-circuit response to avoid repeating the same logic.
     """
+
+    # If this tool has been run before, short-circuit
     if state["checked_checklist"]:
-        state_update = {
+        return Command(update={
             "messages": [
                 ToolMessage(
-                    "We've already told you which checlist items are missing. Let's not repeat ourselves.",
-                    tool_call_id=tool_call_id,
+                    "We've already checked your details. Please proceed.",
+                    tool_call_id=tool_call_id
                 )
             ],
+            "checked_checklist": True,
             "customer_name": state.get("customer_name", ""),
             "product": state.get("product", ""),
             "delivery_address": state.get("delivery_address", ""),
@@ -83,15 +86,20 @@ def check_required_checklist_items(
             "phone_number": state.get("phone_number", ""),
             "payment_method": state.get("payment_method", ""),
             "delivery_date": state.get("delivery_date", ""),
-            "is_finished": False,
-            "checked_checklist": True,
-        }
-        return Command(update=state_update)
-
+            "is_finished": state.get("is_finished", "")
+        })
+    
+    # Otherwise, load inquiry data
     inquiry = {}
     with open("data/customer_inquiry.json", "r") as f:
         inquiry = json.load(f)
+    
+    # Updaate state using inquiry data
+    for key, val in inquiry.items():
+        if key in state:
+            state[key] = val
 
+    # Check which checklislt items are missing
     requirements = [
         "customer_name",
         "product",
@@ -101,26 +109,27 @@ def check_required_checklist_items(
         "payment_method",
         "delivery_date",
     ]
-    missing_requirements = [item for item in requirements if not inquiry.get(item)]
+    missing = [item for item in requirements if not state.get(item)]
 
-    if missing_requirements:
-        response = f"We need the following checklist items from you before you can purchase a HomeBot: {', '.join(missing_requirements)}"
+    # Update state based on required checklist items
+    if missing:
+        response = f"We need the following checklist items from you before you can purchase a HomeBot: {', '.join(missing)}"
     else:
         response = "All required checklist items have been provided."
+        state["is_finished"] = True
 
-    state_update = {
+    return Command(update={
         "messages": [ToolMessage(response, tool_call_id=tool_call_id)],
-        "customer_name": inquiry.get("customer_name", ""),
-        "product": inquiry.get("product", ""),
-        "delivery_address": inquiry.get("delivery_address", ""),
-        "email_address": inquiry.get("email_address", ""),
-        "phone_number": inquiry.get("phone_number", ""),
-        "payment_method": inquiry.get("payment_method", ""),
-        "delivery_date": inquiry.get("delivery_date", ""),
-        "is_finished": False,
         "checked_checklist": True,
-    }
-    return Command(update=state_update)
+        "customer_name": state.get("customer_name", ""),
+        "product": state.get("product", ""),
+        "delivery_address": state.get("delivery_address", ""),
+        "email_address": state.get("email_address", ""),
+        "phone_number": state.get("phone_number", ""),
+        "payment_method": state.get("payment_method", ""),
+        "delivery_date": state.get("delivery_date", ""),
+        "is_finished": state.get("is_finished", "")
+    })
 
 @tool
 def explain_product_tool(
@@ -168,6 +177,7 @@ def explain_product_tool(
 
 @tool
 def parse_date_tool(
+    state: State,
     tool_call_id: Annotated[str, InjectedToolCallId],
     iso_datetime: str
 ) -> str:
@@ -181,15 +191,23 @@ def parse_date_tool(
       "2025-03-29 17:00"
     and then call parse_date_tool(date_str="2025-03-29 17:00").
     """
+
     # Save this parsed date/time in state
     state_update = {
-        "delivery_date": iso_datetime,
         "messages": [
             ToolMessage(
                 content=f"Great, I'll set the delivery date as {iso_datetime}.",
                 tool_call_id=tool_call_id,
             )
         ],
+        "customer_name": state.get("customer_name", ""),
+        "product": state.get("product", ""),
+        "delivery_address": state.get("delivery_address", ""),
+        "email_address": state.get("email_address", ""),
+        "phone_number": state.get("phone_number", ""),
+        "payment_method": state.get("payment_method", ""),
+        "delivery_date": iso_datetime,
+        "is_finished": state.get("is_finished", "")
     }
     return Command(update=state_update)
 
