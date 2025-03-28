@@ -152,6 +152,18 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.types import Command
 
 # Constants
+import json
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import ToolMessage
+from langchain_core.tools import InjectedToolCallId, tool
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.types import Command
+from typing import Literal, Annotated
+from typing_extensions import TypedDict
+
+# Constants
 MODEL = "claude-3-5-haiku-20241022"
 ROLE = (
     "You are a customer support agent for a Domestic Robotics company called HomeBots. "
@@ -161,6 +173,7 @@ ROLE = (
 CONTEXT = (
     "Here is a mandatory checklist of requirements from the customer in order for them to purchase a HomeBot: "
     "\n- Customer's name"
+    "\n- Product"
     "\n- Address for delivery"
     "\n- Email address"
     "\n- Phone number"
@@ -173,12 +186,14 @@ CONTEXT = (
 )
 TASK = (
     "1. Greet the customer and confirm their name. If the customer's name is already known in the conversation state, do not ask for it again."
-    "\n2. Check the case files once (unless new info arises) to see if the customer has submitted all there are any oustanding items needed from the checklist."
-    "\n3. If any checklist items are missing, one by one, ask the customer to provide each of them and save their answer. If all checklist items are saved, inform the customer that they are ready to purchase a HomeBot."
+    "\n2. Check the customer inquiry data once (unless new info arises) to see if there are any outstanding items needed from the checklist."
+    "\n3. If any checklist items are missing, one by one, ask the customer to provide each of them and save their answer."
+    "\n4. If all checklist items are saved, inform the customer that they are ready to purchase a HomeBot."
     "\n4. End the conversation."
 )
 RULES = (
     "- IMPORTANT: Once you have called the check_required_checklist_items tool once, do not call it again unless the user explicitly asks you to re-check. If state[\"checked_checklist\"] is True, do not call check_required_checklist_items. Instead, continue the conversation without repeating the checklist requirements."
+    "- IMPORTANT: Once the checklist items are known in the state, do not ask for them again. If the customer provides new information, update the state accordingly."
     "\n- Use the customer's name if you have it. If the customer's name is already known in the conversation state, do not ask for it again."
     "\n- Always be polite and professional."
     "\n- Be clear and concise in your communication."
@@ -214,22 +229,22 @@ We then define the tools that will be used by the AI agent to interact with the 
 ```python
 # Tools
 @tool
-def check_required_checklist_items(
-    state: State,
-    tool_call_id: Annotated[str, InjectedToolCallId]
-) -> str:
+def check_required_checklist_items(state: State, tool_call_id: Annotated[str, InjectedToolCallId]) -> str:
     """
     This tool checks the customer inquiry to see which checklist items are currently available.
     If we've already run this tool before we do a short-circuit response to avoid repeating the same logic.
     """
+
+    # If this tool has been run before, short-circuit
     if state["checked_checklist"]:
-        state_update = {
+        return Command(update={
             "messages": [
                 ToolMessage(
-                    "We've already told you which checlist items are missing. Let's not repeat ourselves.",
-                    tool_call_id=tool_call_id,
+                    "We've already checked your details. Please proceed.",
+                    tool_call_id=tool_call_id
                 )
             ],
+            "checked_checklist": True,
             "customer_name": state.get("customer_name", ""),
             "product": state.get("product", ""),
             "delivery_address": state.get("delivery_address", ""),
@@ -237,15 +252,20 @@ def check_required_checklist_items(
             "phone_number": state.get("phone_number", ""),
             "payment_method": state.get("payment_method", ""),
             "delivery_date": state.get("delivery_date", ""),
-            "is_finished": False,
-            "checked_checklist": True,
-        }
-        return Command(update=state_update)
+            "is_finished": state.get("is_finished", "")
+        })
 
+    # Otherwise, load inquiry data
     inquiry = {}
     with open("data/customer_inquiry.json", "r") as f:
         inquiry = json.load(f)
 
+    # Updaate state using inquiry data
+    for key, val in inquiry.items():
+        if key in state:
+            state[key] = val
+
+    # Check which checklislt items are missing
     requirements = [
         "customer_name",
         "product",
@@ -255,26 +275,27 @@ def check_required_checklist_items(
         "payment_method",
         "delivery_date",
     ]
-    missing_requirements = [item for item in requirements if not inquiry.get(item)]
+    missing = [item for item in requirements if not state.get(item)]
 
-    if missing_requirements:
-        response = f"We need the following checklist items from you before you can purchase a HomeBot: {', '.join(missing_requirements)}"
+    # Update state based on required checklist items
+    if missing:
+        response = f"We need the following checklist items from you before you can purchase a HomeBot: {', '.join(missing)}"
     else:
         response = "All required checklist items have been provided."
+        state["is_finished"] = True
 
-    state_update = {
+    return Command(update={
         "messages": [ToolMessage(response, tool_call_id=tool_call_id)],
-        "customer_name": inquiry.get("customer_name", ""),
-        "product": inquiry.get("product", ""),
-        "delivery_address": inquiry.get("delivery_address", ""),
-        "email_address": inquiry.get("email_address", ""),
-        "phone_number": inquiry.get("phone_number", ""),
-        "payment_method": inquiry.get("payment_method", ""),
-        "delivery_date": inquiry.get("delivery_date", ""),
-        "is_finished": False,
         "checked_checklist": True,
-    }
-    return Command(update=state_update)
+        "customer_name": state.get("customer_name", ""),
+        "product": state.get("product", ""),
+        "delivery_address": state.get("delivery_address", ""),
+        "email_address": state.get("email_address", ""),
+        "phone_number": state.get("phone_number", ""),
+        "payment_method": state.get("payment_method", ""),
+        "delivery_date": state.get("delivery_date", ""),
+        "is_finished": state.get("is_finished", "")
+    })
 
 @tool
 def explain_product_tool(
@@ -322,6 +343,7 @@ def explain_product_tool(
 
 @tool
 def parse_date_tool(
+    state: State,
     tool_call_id: Annotated[str, InjectedToolCallId],
     iso_datetime: str
 ) -> str:
@@ -335,15 +357,23 @@ def parse_date_tool(
       "2025-03-29 17:00"
     and then call parse_date_tool(date_str="2025-03-29 17:00").
     """
+
     # Save this parsed date/time in state
     state_update = {
-        "delivery_date": iso_datetime,
         "messages": [
             ToolMessage(
                 content=f"Great, I'll set the delivery date as {iso_datetime}.",
                 tool_call_id=tool_call_id,
             )
         ],
+        "customer_name": state.get("customer_name", ""),
+        "product": state.get("product", ""),
+        "delivery_address": state.get("delivery_address", ""),
+        "email_address": state.get("email_address", ""),
+        "phone_number": state.get("phone_number", ""),
+        "payment_method": state.get("payment_method", ""),
+        "delivery_date": iso_datetime,
+        "is_finished": state.get("is_finished", "")
     }
     return Command(update=state_update)
 ```
@@ -466,77 +496,77 @@ Finally, we write the main application that will instantiate the `AiAgent` class
 
 ```python
 import json
-
 from ai.graph import State, AiAgent, CONVERSATION_STATE
 
 def main():
-
     ai_agent = AiAgent()
     graph = ai_agent.build()
 
-    # Streaming function to stream the graph updates
     def stream_graph_updates(state: State):
-        """Runs or streams the graph with the current state."""
         for event in graph.stream(state):
             for value in event.values():
-
-                # Update conversation state
                 for k, v in value.items():
-
-                    # These are new messages from the tool or LLM
                     if k == "messages":
                         for msg in v:
-                            # Append them to the main conversation so the full history is in CONVERSATION_STATE["messages"]
-                            CONVERSATION_STATE["messages"].append(msg)
-                            # Print them to the console
-                            # We'll do a naive approach. If msg is a ToolMessage or LLM, show it.
-                            if hasattr(msg, "content"):
-                                print(f"🤖 AI: {msg.content}")
 
-                    # List
+                            # Store all messages in state
+                            state["messages"].append(msg)
+
+                            # Print messages based on type
+                            if msg.__class__.__name__ == "ToolMessage":
+                                print(f"\t---> 🛠️  Tool: {msg.content}")
+                            elif msg.__class__.__name__ == "AIMessage":
+                                if type(msg.content) == list:
+                                    continue
+                                print(f"\n🤖 AI: {msg.content}")
+
+                    # Update state based on key-value pairs
                     elif isinstance(v, list):
-                        CONVERSATION_STATE[k] = v if not CONVERSATION_STATE[k] else CONVERSATION_STATE[k]
-
-                    # String
+                        state[k] = v if not state[k] else state[k]
                     elif isinstance(v, str):
-                        CONVERSATION_STATE[k] = v if not CONVERSATION_STATE[k] else CONVERSATION_STATE[k]
-
-                    # Boolean
+                        state[k] = v if not state[k] else state[k]
                     elif isinstance(v, bool):
-                        CONVERSATION_STATE[k] = v if not CONVERSATION_STATE[k] else CONVERSATION_STATE[k]
+                        state[k] = v if state[k] == False else state[k]
 
-    # Print the agent's first message
+    # Start the conversation
     first_msg = CONVERSATION_STATE["messages"][-1]
-    print(f"🤖 AI: {first_msg['content']}")
+    print(f"\n🤖 AI: {first_msg['content']}")
 
-    # Start the conversation loop
+    # Continue conversation until exit conditions are met
     while True:
 
+        # Prompt user for input
         user_input = input("🗣️  User: ")
         if user_input.lower() in ["quit", "exit", "q"]:
-            print("🤖 AI: Goodbye!")
-            print(json.dumps(CONVERSATION_STATE, indent=2, sort_keys=True, default=str))
+            print("\n🤖 AI: Goodbye!")
             break
 
-        # Store user message
+        # Add user input to messages
         CONVERSATION_STATE["messages"].append({"role": "user", "content": user_input})
 
-        # 1) Run/stream the graph
+        # With updates messages, stream updates
         stream_graph_updates(CONVERSATION_STATE)
 
-        # 2) If forcibly ended
-        if CONVERSATION_STATE["is_finished"]:
-            print("🤖 AI: Thanks for your time! Bye.")
-            print(json.dumps(CONVERSATION_STATE, indent=2, sort_keys=True, default=str))
+        # If all required fields have been collected, end conversation
+        check = [
+            "customer_name",
+            "product",
+            "delivery_address",
+            "email_address",
+            "phone_number",
+            "payment_method",
+            "delivery_date"
+        ]
+        if all(CONVERSATION_STATE[key] for key in check):
+            CONVERSATION_STATE["is_finished"] = True
+            print("\n🤖 AI: Thanks for your time, goodbye!")
+            with open("data/log.json", "w") as f:
+                f.write(json.dumps(CONVERSATION_STATE, indent=2, sort_keys=True, default=str))
             break
 
-        # 3) End if user has confirmed all checklist items
-        check = ["customer_name", "product", "delivery_address", "email_address", "phone_number", "payment_method", "delivery_date"]
-        if all(CONVERSATION_STATE[key] != "" for key in check):
-            CONVERSATION_STATE["is_finished"] = True
-            print("🤖 AI: Thanks for your time, goodbye!")
-
-            # Save the conversation state to a JSON file
+        # If conversation is finished, eend conversation
+        if CONVERSATION_STATE["is_finished"]:
+            print("\n🤖 AI: Thanks for your time! Bye.")
             with open("data/log.json", "w") as f:
                 f.write(json.dumps(CONVERSATION_STATE, indent=2, sort_keys=True, default=str))
             break
